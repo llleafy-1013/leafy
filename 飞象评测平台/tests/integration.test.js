@@ -18,10 +18,26 @@ test('九题完整链路、重试幂等、匿名独立评分、刷新及重启�
  async function req(path,{method='GET',body,token,headers={}}={}){const r=await fetch(base+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`} :{}),...headers},body:body?JSON.stringify(body):undefined});return {status:r.status,data:await r.json()};}
  async function finished(id){for(let i=0;i<150;i++){const {data}=await req('/api/admin/runs/'+id);if(!data.active)return data;await delay(30);}throw new Error('Run timeout');}
  try{await start();let {data:state}=await req('/api/admin/state');assert.equal(state.benchmarks[0].cases.length,9);assert.equal(state.models.length,4);
-  assert.equal((await req('/api/admin/runs',{method:'POST',body:{name:'未配置',benchmarkId:'prd-v1'}})).status,400);
+  const unconfigured=(await req('/api/admin/runs',{method:'POST',body:{name:'未配置',benchmarkId:'prd-v1'}})).data;assert.equal((await req(`/api/admin/runs/${unconfigured.id}/publish`,{method:'POST',body:{}})).status,400);assert.equal(genCalls,0);
   for(const m of state.models){const r=await req('/api/admin/models/'+m.id,{method:'PUT',body:{model:m.id+'-unit',apiKey:'test-only-secret-'+m.id,baseUrl:`http://127.0.0.1:${upstream.address().port}/v1`}});assert.equal(r.status,200);assert.ok(!JSON.stringify(r.data).includes('test-only-secret'));}
   assert.equal((await req('/api/admin/dimensions',{method:'PUT',headers:{Origin:'https://hostile.invalid'},body:{}})).status,403);
-  const created=await req('/api/admin/runs',{method:'POST',body:{name:'隔离测试批次',benchmarkId:'prd-v1'}});assert.equal(created.status,201,JSON.stringify(created.data));const id=created.data.id;let run=await finished(id);assert.equal(run.progress.generated,26);assert.equal(run.status,'needs_attention');assert.equal(draftCalls,9);assert.equal(auditCalls,9);assert.equal(judgeCalls,26);
+  const created=await req('/api/admin/runs',{method:'POST',body:{name:'隔离测试批次'}});assert.equal(created.status,201,JSON.stringify(created.data));const id=created.data.id;
+  let draft=(await req(`/api/admin/runs/${id}`)).data;assert.equal(draft.published,false);assert.equal(draft.setupStep,2);assert.equal(draft.outputs.length,0);assert.equal(genCalls,0);
+  assert.equal((await req(`/api/admin/runs/${id}/retry`,{method:'POST',body:{}})).status,409);
+  assert.equal((await req(`/api/admin/runs/${id}/publish`,{method:'POST',body:{}})).status,400);
+  assert.equal((await req(`/api/admin/runs/${id}/config`,{method:'PUT',body:{benchmarkId:'prd-v1'}})).status,200);
+  assert.equal((await req(`/api/admin/runs/${id}/config`,{method:'PUT',body:{benchmarkId:'prd-v1',caseIds:[]}})).status,400);
+  const initialPerson=(await req('/api/admin/personnel',{method:'POST',body:{name:'初始评审'}})).data;
+  await req(`/api/admin/runs/${id}/reviewers`,{method:'PUT',body:{personIds:[initialPerson.id]}});
+  draft=(await req(`/api/admin/runs/${id}`)).data;assert.equal(draft.setupStep,4);assert.equal(draft.reviewers.length,1);
+  assert.equal((await req('/api/review/join',{method:'POST',body:{name:initialPerson.name,runToken:draft.token}})).status,403,'未发布任务禁止加入');
+  const privateDB=new DatabaseSync(join(dir,'edubench.sqlite'));const hiddenToken=privateDB.prepare('SELECT token FROM reviewers WHERE runId=?').get(id).token;privateDB.close();
+  assert.equal((await req('/api/review/session',{token:hiddenToken})).status,401,'即使持有草稿评审 token 也不可访问');
+  await stop();await start();draft=(await req(`/api/admin/runs/${id}`)).data;assert.equal(draft.published,false);assert.equal(draft.setupStep,4);assert.equal(draft.snapshot.cases.length,9);assert.equal(draft.reviewers.length,1);assert.deepEqual([genCalls,draftCalls,auditCalls,judgeCalls],[0,0,0,0],'配置与重启不能调用模型');
+  const published=await req(`/api/admin/runs/${id}/publish`,{method:'POST',body:{}});assert.equal(published.status,200,JSON.stringify(published.data));assert.equal(published.data.published,true);assert.equal(published.data.outputs.length,27);
+  assert.equal((await req(`/api/admin/runs/${id}/publish`,{method:'POST',body:{}})).status,200,'重复发布幂等');
+  assert.equal((await req(`/api/admin/runs/${id}/config`,{method:'PUT',body:{name:'不应改写'}})).status,409);
+  let run=await finished(id);assert.equal(run.progress.generated,26);assert.equal(run.status,'needs_attention');assert.equal(draftCalls,9);assert.equal(auditCalls,9);assert.equal(judgeCalls,26);
   assert.equal((await req(`/api/admin/runs/${id}/retry`,{method:'POST',body:{timeoutMs:1}})).status,400);const preserved=run.outputs.filter(o=>o.generationStatus==='done');assert.equal((await req(`/api/admin/runs/${id}/retry`,{method:'POST',body:{timeoutMs:600000,maxTokens:32768}})).status,200);run=await finished(id);for(const old of preserved)assert.deepEqual(run.outputs.find(o=>o.id===old.id),old,'成功步骤应原样保留');assert.equal(run.outputs.find(o=>o.caseId==='Q01'&&o.modelId==='deepseek').usage.request.timeoutMs,600000);assert.equal(run.outputs.find(o=>o.caseId==='Q01'&&o.modelId==='deepseek').usage.request.maxTokens,32768);assert.equal(run.snapshot.models[0].maxTokens,16384);assert.equal(run.snapshot.models[0].timeoutMs,300000,'延长等待不改写原有配置快照');assert.equal(genCalls,28);assert.equal(judgeCalls,27);assert.equal(draftCalls,9);assert.equal(auditCalls,9);assert.equal(run.progress.judged,27);
   assert.equal((await req('/api/review/join',{method:'POST',body:{runToken:run.token,name:'未分配人员'}})).status,403);
   const pa=(await req('/api/admin/personnel',{method:'POST',body:{name:'评审 A'}})).data;
@@ -50,11 +66,12 @@ test('九题完整链路、重试幂等、匿名独立评分、刷新及重启�
   await req('/api/admin/runs/'+id+'/reviewers',{method:'PUT',body:{personIds:[pb.id]}});
   assert.equal((await req('/api/review/session',{token:a.token})).status,401);
   assert.equal((await req('/api/review/score',{method:'POST',token:a.token,body:{outputId:first.id,scores:{accuracy:3,suitability:3,utility:3}}})).status,401);
-  run=(await req('/api/admin/runs/'+id)).data;assert.equal(run.reviews.length,54);assert.equal(run.allReviewers.length,2);assert.equal(run.reviewers.length,1);assert.equal(run.report.models[0].values.accuracy,3);
+  run=(await req('/api/admin/runs/'+id)).data;assert.equal(run.reviews.length,54);assert.equal(run.allReviewers.length,3);assert.equal(run.reviewers.length,1);assert.equal(run.report.models[0].values.accuracy,3);
   await req('/api/admin/runs/'+id+'/reviewers',{method:'PUT',body:{personIds:[pa.id,pb.id]}});
   assert.equal((await req('/api/review/session',{token:a.token})).data.cases.filter(c=>c.scores).length,27);
   const second=(await req('/api/admin/runs',{method:'POST',body:{name:'仅其他人员可见',benchmarkId:'prd-v1'}})).data;
   await req('/api/admin/runs/'+second.id+'/reviewers',{method:'PUT',body:{personIds:[pc.id]}});
+  assert.equal((await req(`/api/admin/runs/${second.id}/publish`,{method:'POST',body:{}})).status,200);
   const other=(await req('/api/review/join',{method:'POST',body:{name:pc.name}})).data;
   const otherSession=(await req('/api/review/session',{token:other.token})).data;
   assert.equal(otherSession.tasks.length,9);assert.equal(otherSession.totalExpected,27);

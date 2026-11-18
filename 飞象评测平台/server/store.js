@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS assignments (reviewerId TEXT NOT NULL REFERENCES revi
 CREATE TABLE IF NOT EXISTS reviews (reviewerId TEXT NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,outputId TEXT NOT NULL REFERENCES outputs(id) ON DELETE CASCADE,scores TEXT NOT NULL,note TEXT NOT NULL,updated TEXT NOT NULL, PRIMARY KEY(reviewerId,outputId));
 CREATE TABLE IF NOT EXISTS personnel (id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,created TEXT NOT NULL,updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reviewer_cases (reviewerId TEXT NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,caseId TEXT NOT NULL,PRIMARY KEY(reviewerId,caseId));
+CREATE TABLE IF NOT EXISTS run_workflows (runId TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,step INTEGER NOT NULL DEFAULT 2,publishedAt TEXT,updated TEXT NOT NULL);
 `);
 export const json=JSON.stringify,parse=s=>s?JSON.parse(s):null,uid=()=>randomUUID(),now=()=>new Date().toISOString();
 export function getKV(key,fallback){const r=db.prepare('SELECT value FROM kv WHERE key=?').get(key);return r?parse(r.value):fallback;}
@@ -40,7 +41,7 @@ for(const m of defaults){const existing=db.prepare('SELECT config FROM models WH
 if(getKV('modelSetupVersion',0)<3){const row=db.prepare('SELECT config FROM models WHERE id=?').get('doubao');if(row){const m=parse(row.config);m.protocol='responses';db.prepare('UPDATE models SET config=? WHERE id=?').run(json(m),m.id);}putKV('modelSetupVersion',3);}
 export function getModels(){return db.prepare("SELECT config FROM models ORDER BY CASE id WHEN 'doubao' THEN 0 WHEN 'deepseek' THEN 1 WHEN 'glm' THEN 2 ELSE 3 END").all().map(r=>parse(r.config));}
 export function safeModel(m){const {apiKey,...rest}=m;return {...rest,hasKey:Boolean(apiKey),ready:Boolean(apiKey&&m.model&&m.baseUrl)};}
-export function getRun(id){const r=db.prepare('SELECT * FROM runs WHERE id=?').get(id);return r?{...r,snapshot:parse(r.snapshot)}:null;}
+export function getRun(id){const r=db.prepare('SELECT * FROM runs WHERE id=?').get(id);if(!r)return null;const w=db.prepare('SELECT * FROM run_workflows WHERE runId=?').get(id);return {...r,snapshot:parse(r.snapshot),published:!w||Boolean(w.publishedAt),publishedAt:w?.publishedAt??null,setupStep:w?.step??4};}
 export function getOutputs(id){return db.prepare('SELECT * FROM outputs WHERE runId=? ORDER BY caseId,modelId').all(id).map(r=>({...r,usage:parse(r.usage),autoScore:parse(r.autoScore),judgeMeta:parse(r.judgeMeta)}));}
 export function getReviewers(id){return db.prepare('SELECT r.id,p.name,r.personId,r.active,r.created FROM reviewers r JOIN personnel p ON p.id=r.personId WHERE runId=? ORDER BY r.created,r.id').all(id);}
 export function getReviews(id){return db.prepare('SELECT r.* FROM reviews r JOIN outputs o ON o.id=r.outputId WHERE o.runId=?').all(id).map(r=>({...r,scores:parse(r.scores)}));}

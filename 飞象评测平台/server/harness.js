@@ -3,7 +3,7 @@ import {callModel,draftRubric,auditRubric,judgeOutput,cleanError} from './provid
 import {assert} from './domain.js';
 export const activeRuns=new Map();
 function configFor(snapshot,timeoutMs,maxTokens){const current=getModels().find(m=>m.id===snapshot.id);assert(current?.apiKey,`${snapshot.name} 缺少 API 密钥`);return {...snapshot,apiKey:current.apiKey,timeoutMs:timeoutMs??snapshot.timeoutMs,maxTokens:maxTokens??snapshot.maxTokens};}
-export function launch(id,{timeoutMs,maxTokens}={}){assert(timeoutMs===undefined||(Number.isInteger(timeoutMs)&&timeoutMs>=10000&&timeoutMs<=600000),'重试等待时间须为 10—600 秒');assert(maxTokens===undefined||(Number.isInteger(maxTokens)&&maxTokens>=256&&maxTokens<=65536),'重试生成预算须为 256—65536 Token');assert(!activeRuns.has(id),'任务正在执行，请等待',409);const run=getRun(id);assert(run,'任务不存在',404);
+export function launch(id,{timeoutMs,maxTokens}={}){assert(timeoutMs===undefined||(Number.isInteger(timeoutMs)&&timeoutMs>=10000&&timeoutMs<=600000),'重试等待时间须为 10—600 秒');assert(maxTokens===undefined||(Number.isInteger(maxTokens)&&maxTokens>=256&&maxTokens<=65536),'重试生成预算须为 256—65536 Token');assert(!activeRuns.has(id),'任务正在执行，请等待',409);const run=getRun(id);assert(run,'任务不存在',404);assert(run.published,'请先发布任务',409);
  for(const m of [...run.snapshot.models,run.snapshot.judge])configFor(m);
  db.prepare("UPDATE runs SET status='running' WHERE id=?").run(id);
  const promise=execute(id,timeoutMs,maxTokens).catch(e=>{console.error('Harness:',cleanError(e,getModels().map(m=>m.apiKey)));db.prepare("UPDATE runs SET status='interrupted' WHERE id=?").run(id);}).finally(()=>activeRuns.delete(id));activeRuns.set(id,promise);
