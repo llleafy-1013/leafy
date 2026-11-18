@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="DOGGO：帮助人与狗一起找到更适合生活的城市。" />
+    <title>DOGGO · Find your go</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#find" aria-label="DOGGO 首页"><span class="brand-mark">✦</span><span>DOGGO</span></a>
+        <nav class="main-nav" aria-label="主导航">
+          <button data-view="live">LIVE</button>
+          <button data-view="care">CARE</button>
+          <button class="active" data-view="find">FIND</button>
+          <button data-view="move">MOVE</button>
+          <button data-view="profile">我的 DOGGO</button>
+        </nav>
+        <button class="icon-button" id="savedButton" aria-label="打开收藏">♡</button>
+      </header>
+
+      <main>
+        <section class="view active" id="view-find" data-view-panel="find">
+          <div class="hero-copy">
+            <p class="eyebrow">FIND YOUR GO <span>01 / 04</span></p>
+            <h1>和狗狗一起，<em>找到适合生活的地方。</em></h1>
+            <p class="hero-note">先选择犬种，查看中国大陆省份、自治区与直辖市的基础候选地区。</p>
+          </div>
+
+          <div class="finder-card">
+            <div class="finder-head">
+              <div>
+                <p class="kicker">你的起点</p>
+                <h2>你现在更确定什么？</h2>
+              </div>
+              <div class="step-count">STEP <strong id="stepNumber">01</strong> / 03</div>
+            </div>
+            <div class="mode-switch" role="tablist" aria-label="筛选起点">
+              <button class="mode active" data-mode="dog" role="tab">我知道狗狗</button>
+              <button class="mode" data-mode="city" role="tab">我知道城市</button>
+              <button class="mode" data-mode="explore" role="tab">还不确定，先逛逛 ↗</button>
+            </div>
+            <div class="filter-row">
+              <label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="搜索犬种，例如：金毛、泰迪、柯基" autocomplete="off" /></label>
+              <button class="filter-button" id="filterButton"><span>☷</span><span>筛选</span><b id="filterCount">0</b></button>
+            </div>
+            <div class="filter-drawer" id="filterDrawer" hidden>
+              <div class="drawer-title">让结果更接近你的生活</div>
+              <label>气候倾向 <select id="climateFilter"><option value="all">不限</option><option value="warm">温暖湿润</option><option value="temperate">温和四季</option><option value="cool">偏凉干燥</option></select></label>
+              <label>资料状态 <select id="policyFilter"><option value="all">全部资料</option><option value="clear">有省级公开入口</option><option value="missing">待核验</option></select></label>
+              <button class="text-button" id="clearFilters">清除筛选</button>
+            </div>
+            <div class="content-grid">
+              <div>
+                <div class="section-label"><span id="choiceLabel">选择一个犬种</span><span class="result-count"><b id="resultCount">0</b> 个结果</span></div>
+                <div class="chip-grid" id="choiceGrid"></div>
+                <p class="search-empty" id="searchEmpty" hidden>没有找到这个犬种，可以试试“金毛”“泰迪”“哈士奇”或“柯基”。</p>
+              </div>
+              <aside class="selection-summary" id="selectionSummary">
+                <div class="summary-icon">◎</div>
+                <p class="kicker">LIVE MATCH</p>
+                <h3 id="summaryTitle">先选一个起点</h3>
+                <p id="summaryText">选择犬种后，我们会告诉你哪些城市值得继续了解。</p>
+              </aside>
+            </div>
+          </div>
+
+          <section class="results-section" id="resultsSection">
+            <div class="section-heading"><div><p class="kicker">REGION × DOGGO</p><h2 id="resultsTitle">选择犬种后查看候选地区</h2></div><button class="text-button" id="resetButton">重新选择 ↗</button></div>
+            <div class="result-grid" id="resultGrid"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-move" data-view-panel="move">
+          <div class="page-intro"><p class="eyebrow">MOVE <span>02 / 04</span></p><h1>把出发前的每一步，<em>放在手边。</em></h1><p>政策、登记和运输信息只呈现可追溯的公开资料；缺少可靠来源的地方会明确标记。</p></div>
+          <div class="move-layout"><div class="move-main"><div class="tab-pills"><button class="active" data-move-tab="policy">养犬政策</button><button data-move-tab="transport">狗狗运输</button><button data-move-tab="checklist">搬家清单</button></div><div id="moveContent"></div></div><aside class="source-card"><p class="kicker">DATA NOTE</p><h3>公开资料底库</h3><p>当前首屏只展示省级行政区资料。城市级规定会在后续城市阶段单独接入。</p><div class="source-stat"><strong>31</strong><span>个省级地区</span></div><div class="source-stat"><strong>2026.09</strong><span>最近整理</span></div></aside></div>
+        </section>
+
+        <section class="view" id="view-live" data-view-panel="live"><div class="page-intro"><p class="eyebrow">LIVE <span>03 / 04</span></p><h1>先看懂一座城市，<em>再决定要不要去。</em></h1><p>从政策、气候和城市设施开始，建立属于你的生活地图。</p></div><div class="live-grid" id="liveGrid"></div></section>
+        <section class="view" id="view-care" data-view-panel="care"><div class="page-intro"><p class="eyebrow">CARE <span>04 / 04</span></p><h1>和狗狗一起，<em>把日子过得更好。</em></h1><p>先从基础照护开始，之后再根据狗狗的年龄、体型和城市气候细化。</p></div><div class="care-grid"><article><span>01</span><h3>第一次养狗</h3><p>疫苗、芯片、登记和家庭准备的基础清单。</p></article><article><span>02</span><h3>运动与训练</h3><p>让运动量、居住空间和犬种特征一起被考虑。</p></article><article><span>03</span><h3>气候注意事项</h3><p>高温、潮湿和冬季出行的日常提醒。</p></article></div></section>
+        <section class="view" id="view-profile" data-view-panel="profile"><div class="page-intro"><p class="eyebrow">MY DOGGO</p><h1>你的下一站，<em>从这里开始。</em></h1><p>保存喜欢的城市和狗狗，下一次回来可以接着筛选。</p></div><div class="profile-card"><div class="profile-avatar">🐶</div><div><p class="kicker">GUEST PROFILE</p><h2>还没有建立档案</h2><p>完成一次 FIND 后，收藏会出现在这里。</p></div><button class="primary-button" data-view="find">去 FIND</button></div></section>
+      </main>
+      <footer><span>© 2026 DOGGO</span><span>公开资料整理中 · 不构成法律意见</span></footer>
+    </div>
+    <div class="toast" id="toast" role="status"></div>
+    <script src="app.js"></script>
+    <script src="site.js"></script>
+  </body>
+</html>

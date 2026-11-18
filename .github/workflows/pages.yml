@@ -1,4 +1,4 @@
-name: Publish Paw Diary to GitHub Pages
+name: Publish leafy portfolio
 
 on:
   push:
@@ -23,12 +23,18 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build public static pages
+        run: node .github/scripts/build-pages.mjs
       - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Upload website
+      - name: Upload public website only
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
       - name: Deploy website
         id: deployment
         uses: actions/deploy-pages@v4
