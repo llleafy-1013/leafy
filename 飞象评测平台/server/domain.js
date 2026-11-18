@@ -36,12 +36,13 @@ export function validateRubric(v){
 export const mean=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
 export function calculateReport(run,outputs,reviews,reviewers=[]){
  const ds=run.snapshot.dimensions;const cases=run.snapshot.cases;
- const rows=outputs.map(o=>{const rs=reviews.filter(r=>r.outputId===o.id);const vals={};for(const d of ds)vals[d.id]=d.kind==='auto'?(o.autoScore?.[d.id]?.score??null):mean(rs.map(r=>r.scores[d.id]));
- const complete=ds.every(d=>vals[d.id]!==null);const fullReviews=reviewers.length>0&&reviewers.every(r=>rs.some(x=>x.reviewerId===r.id));
+ const rows=outputs.map(o=>{const expectedReviewers=reviewers.filter(r=>!r.caseIds||r.caseIds.includes(o.caseId));const rs=reviews.filter(r=>r.outputId===o.id&&expectedReviewers.some(v=>v.id===r.reviewerId));const vals={};for(const d of ds)vals[d.id]=o.generationStatus==='failed'?null:d.kind==='auto'?(o.autoScore?.[d.id]?.score??null):mean(rs.map(r=>r.scores[d.id]));
+ const complete=ds.every(d=>vals[d.id]!==null);const fullReviews=o.generationStatus!=='failed'&&expectedReviewers.length>0&&expectedReviewers.every(r=>rs.some(x=>x.reviewerId===r.id));
  const total=complete?ds.reduce((s,d)=>s+vals[d.id]*d.weight/3,0):null;
- return {...o,values:vals,humanCount:rs.length,fullReviews,total,disputed:ds.some(d=>d.kind==='human'&&rs.length>1&&Math.max(...rs.map(r=>r.scores[d.id]))-Math.min(...rs.map(r=>r.scores[d.id]))>=2)};});
+ return {...o,values:vals,humanCount:rs.length,humanExpected:expectedReviewers.length,fullReviews,total,disputed:ds.some(d=>d.kind==='human'&&rs.length>1&&Math.max(...rs.map(r=>r.scores[d.id]))-Math.min(...rs.map(r=>r.scores[d.id]))>=2)};});
  function aggregate(list,expected){const values=Object.fromEntries(ds.map(d=>[d.id,mean(list.map(x=>x.values[d.id]).filter(x=>x!==null))]));const complete=list.length===expected&&list.every(x=>x.total!==null&&x.fullReviews);return {values,complete,total:complete?ds.reduce((s,d)=>s+values[d.id]*d.weight/3,0):null,scored:list.filter(x=>x.total!==null).length,expected};}
  const models=run.snapshot.models.map(m=>{const list=rows.filter(x=>x.modelId===m.id);return {id:m.id,name:m.name,provider:m.provider,...aggregate(list,cases.length),autoDone:list.filter(x=>x.autoScore).length,humanDone:list.filter(x=>x.fullReviews).length,latencyMs:mean(list.filter(x=>x.latencyMs!=null).map(x=>x.latencyMs)),tokens:list.reduce((s,x)=>s+(x.usage?.total??0),0),groups:Object.fromEntries(['category','queryType','subject'].map(key=>[key,[...new Set(cases.map(c=>c[key]))].map(label=>{const ids=cases.filter(c=>c[key]===label).map(c=>c.id);return {label,...aggregate(list.filter(x=>ids.includes(x.caseId)),ids.length)};})]))};});
  const ranked=models.filter(m=>m.total!==null).sort((a,b)=>b.total-a.total);for(const m of models)m.rank=m.total===null?null:1+ranked.filter(x=>x.total>m.total+1e-8).length;
- return {models,rows,complete:models.every(m=>m.complete),dimensions:ds};
+ const failures=rows.filter(o=>o.generationStatus==='failed'||o.judgeStatus==='failed').map(o=>({id:o.id,caseId:o.caseId,modelId:o.modelId,stage:o.generationStatus==='failed'?'生成失败':'机评失败',error:o.error||o.judgeError||'调用失败'}));
+ return {models,rows,failures,complete:models.every(m=>m.complete),dimensions:ds};
 }

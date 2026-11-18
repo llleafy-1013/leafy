@@ -1,7 +1,8 @@
+import {authRequired,requireAdmin,adminAuthenticated,loginAdmin,logoutAdmin,checkLoginRate,checkReviewCode,issueReviewCode} from './auth.js';
 import http from 'node:http';
 import {readFileSync,existsSync} from 'node:fs';
 import {resolve,extname} from 'node:path';
-import {personnelList,savePerson,assignPeople,ensureAssignments,reviewerProgress,validName} from './reviewing.js';
+import {personnelList,savePerson,assignPeople,ensureAssignments,reviewerProgress,reviewerCaseIds,validName} from './reviewing.js';
 import {db,parse,json,uid,now,getKV,putKV,getModels,safeModel,getRun,getOutputs,getReviews,getReviewers,transaction,recoverInterrupted} from './store.js';
 import {assert,validateCases,validateDimensions,parseCSV,calculateReport} from './domain.js';
 import {callModel,cleanError} from './providers.js';
@@ -10,7 +11,7 @@ const port=Number(process.env.PORT||3000),host=process.env.HOST||'0.0.0.0';
 const publicDir=resolve('public');
 function send(res,status,data,type='application/json; charset=utf-8'){res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'});res.end(type.startsWith('application/json')?json(data):data);}
 async function body(req){let data='';for await(const chunk of req){data+=chunk;assert(Buffer.byteLength(data)<4e6,'请求体过大',413);}try{return data?JSON.parse(data):{};}catch{throw Object.assign(new Error('请求必须为有效 JSON'),{status:400});}}
-function admin(req){const ip=req.socket.remoteAddress;assert(['127.0.0.1','::1','::ffff:127.0.0.1'].includes(ip),'管理端仅允许在本机访问；评审人员请使用评测链接。',403);}
+
 function reviewer(req){const token=(req.headers.authorization||'').replace(/^Bearer /,'');const r=db.prepare('SELECT r.*,p.name FROM reviewers r JOIN personnel p ON p.id=r.personId WHERE r.token=? AND r.active=1').get(token);assert(r,'请先输入姓名进入评测',401);return r;}
 function anonymize(content,run){let text=content;const names=[...run.snapshot.models.flatMap(m=>[m.name,m.model,m.provider]),'通义千问','Qwen','豆包','Doubao','DeepSeek','智谱','GLM','阿里云'].filter(s=>s&&s.length>1).sort((a,b)=>b.length-a.length);for(const name of names)text=text.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),'[匿名模型]');return text;}
 function runDetail(run){const outputs=getOutputs(run.id),reviews=getReviews(run.id),allReviewers=reviewerProgress(run,outputs,reviews),reviewers=allReviewers.filter(r=>r.active);const report=calculateReport(run,outputs,reviews.filter(x=>reviewers.some(r=>r.id===x.reviewerId)),reviewers);const completed=report.complete&&run.status!=='running';return {...run,status:completed?'completed':run.status,outputs,reviews,reviewers,allReviewers,rubrics:db.prepare('SELECT * FROM rubrics WHERE runId=? ORDER BY caseId').all(run.id).map(r=>({...r,draft:parse(r.draft),rubric:parse(r.rubric),meta:parse(r.meta)})),report,progress:{generated:outputs.filter(o=>o.generationStatus==='done').length,judged:outputs.filter(o=>o.judgeStatus==='done').length,human:report.rows.filter(o=>o.fullReviews).length,total:outputs.length},active:activeRuns.has(run.id)};}
@@ -20,9 +21,12 @@ const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,'http://localhost');const path=url.pathname;const method=req.method;
   if(method!=='GET'&&method!=='HEAD'){
    assert(req.headers['sec-fetch-site']!=='cross-site','不接受跨站请求',403);
-   if(req.headers.origin)assert(new URL(req.headers.origin).host===req.headers.host,'请求来源不匹配',403);
+   if(req.headers.origin){const origin=new URL(req.headers.origin);const expected=process.env.PUBLIC_ORIGIN?new URL(process.env.PUBLIC_ORIGIN).origin:null;assert(expected?origin.origin===expected:origin.host===req.headers.host,'请求来源不匹配',403);}
   }
-  if(path.startsWith('/api/admin/'))admin(req);
+  if(path.startsWith('/api/admin/'))requireAdmin(req);
+  if(path==='/api/auth/config'&&method==='GET')return send(res,200,{adminLoginRequired:authRequired,reviewCodeRequired:authRequired,adminAuthenticated:adminAuthenticated(req)});
+  if(path==='/api/auth/admin/login'&&method==='POST'){const b=await body(req);loginAdmin(req,res,b.password);return send(res,200,{ok:true});}
+  if(path==='/api/auth/admin/logout'&&method==='POST'){logoutAdmin(req,res);return send(res,200,{ok:true});}
   if(path==='/api/health')return send(res,200,{ok:true});
   if(path==='/api/admin/state'&&method==='GET'){
    const benchmarks=db.prepare('SELECT * FROM benchmarks ORDER BY created').all().map(b=>({...b,cases:parse(b.cases)}));
@@ -34,9 +38,10 @@ const server=http.createServer(async(req,res)=>{
    const b=await body(req);assert(typeof b.name==='string'&&b.name.trim(),'请输入测试集名称');const cases=validateCases(b.format==='csv'?parseCSV(b.content):b.cases);const id=uid();db.prepare('INSERT INTO benchmarks VALUES (?,?,?,?)').run(id,b.name.trim(),json(cases),now());return send(res,201,{id});
   }
   let match;
+  if((match=path.match(/^\/api\/admin\/personnel\/([^/]+)\/code$/))&&method==='POST')return send(res,200,{accessCode:issueReviewCode(match[1])});
   if(path==='/api/admin/personnel'&&method==='POST'){const b=await body(req);return send(res,201,savePerson(null,b.name));}
   if((match=path.match(/^\/api\/admin\/personnel\/([^/]+)$/))&&method==='PUT'){const b=await body(req);return send(res,200,savePerson(match[1],b.name));}
-  if((match=path.match(/^\/api\/admin\/runs\/([^/]+)\/reviewers$/))&&method==='PUT'){const run=getRun(match[1]);assert(run,'评测任务不存在',404);const b=await body(req);assignPeople(run,b.personIds);return send(res,200,runDetail(run));}
+  if((match=path.match(/^\/api\/admin\/runs\/([^/]+)\/reviewers$/))&&method==='PUT'){const run=getRun(match[1]);assert(run,'评测任务不存在',404);const b=await body(req);assignPeople(run,b.assignments??b.personIds);return send(res,200,runDetail(run));}
 
   if((match=path.match(/^\/api\/admin\/benchmarks\/([^/]+)$/))){const id=match[1];assert(db.prepare('SELECT id FROM benchmarks WHERE id=?').get(id),'测试集不存在',404);
    if(method==='DELETE'){db.prepare('DELETE FROM benchmarks WHERE id=?').run(id);return send(res,200,{ok:true});}
@@ -56,12 +61,12 @@ const server=http.createServer(async(req,res)=>{
   }
   if((match=path.match(/^\/api\/admin\/runs\/([^/]+)(\/(retry|export))?$/))){const id=match[1];const run=getRun(id);assert(run,'评测任务不存在',404);
    if(method==='GET')return send(res,200,runDetail(run));
-   if(method==='POST'&&match[3]==='retry'){assert(activeRuns.size===0,'请等待当前批次执行完毕',409);launch(id);return send(res,200,{ok:true});}
+   if(method==='POST'&&match[3]==='retry'){assert(activeRuns.size===0,'请等待当前批次执行完毕',409);const b=await body(req);launch(id,{timeoutMs:b.timeoutMs,maxTokens:b.maxTokens});return send(res,200,{ok:true});}
    if(method==='DELETE'&&!match[3]){assert(!activeRuns.has(id),'运行中的任务不能删除',409);db.prepare('DELETE FROM runs WHERE id=?').run(id);return send(res,200,{ok:true});}
   }
   // No public batch inventory. A name can join only an explicitly assigned batch.
   if(path==='/api/review/join'&&method==='POST'){
-   const b=await body(req),name=validName(b.name);const person=db.prepare('SELECT * FROM personnel WHERE name=?').get(name);assert(person,'该姓名尚未分配评测任务，请联系管理员',403);
+   const b=await body(req),name=validName(b.name),reset=authRequired?checkLoginRate(req,'review'):()=>{};const person=db.prepare('SELECT * FROM personnel WHERE name=?').get(name);const sessionPerson=db.prepare('SELECT personId FROM reviewers WHERE token=? AND active=1').get((req.headers.authorization||'').replace(/^Bearer /,''));assert(person&&(!authRequired||sessionPerson?.personId===person.id||checkReviewCode(person.id,b.accessCode)),authRequired?'姓名或个人评测码不正确':'该姓名尚未分配评测任务，请联系管理员',403);reset();
    const projects=db.prepare('SELECT runs.id,runs.name,runs.token FROM runs JOIN reviewers r ON r.runId=runs.id WHERE r.personId=? AND r.active=1 ORDER BY runs.created DESC').all(person.id);
    const project=b.runToken?projects.find(p=>p.token===b.runToken):projects[0];assert(project,'该姓名尚未分配此评测任务，请联系管理员',403);
    const r=db.prepare('SELECT * FROM reviewers WHERE runId=? AND personId=? AND active=1').get(project.id,person.id);transaction(()=>ensureAssignments(r));
@@ -69,14 +74,14 @@ const server=http.createServer(async(req,res)=>{
   }
   if(path==='/api/review/session'&&method==='GET'){
    const r=reviewer(req),run=getRun(r.runId);transaction(()=>ensureAssignments(r));
-   const outputs=getOutputs(run.id);const assigned=db.prepare('SELECT a.outputId,a.position,a.code,r.scores,r.note,r.updated FROM assignments a LEFT JOIN reviews r ON r.outputId=a.outputId AND r.reviewerId=a.reviewerId WHERE a.reviewerId=? ORDER BY a.position').all(r.id);
-   const all=assigned.map(a=>{const o=outputs.find(o=>o.id===a.outputId);const c=run.snapshot.cases.find(c=>c.id===o.caseId);return {id:a.outputId,position:a.position,code:a.code,case:c,content:o.generationStatus==='done'?anonymize(o.content,run):'',status:o.generationStatus,scores:parse(a.scores),note:a.note||'',updated:a.updated};});
-   const tasks=run.snapshot.cases.map(c=>({case:c,answers:all.filter(a=>a.case.id===c.id)}));
+   const scope=reviewerCaseIds(r);const outputs=getOutputs(run.id);const assigned=db.prepare('SELECT a.outputId,a.position,a.code,r.scores,r.note,r.updated FROM assignments a LEFT JOIN reviews r ON r.outputId=a.outputId AND r.reviewerId=a.reviewerId WHERE a.reviewerId=? ORDER BY a.position').all(r.id);
+   const all=assigned.filter(a=>scope.includes(outputs.find(o=>o.id===a.outputId)?.caseId)).map(a=>{const o=outputs.find(o=>o.id===a.outputId);const c=run.snapshot.cases.find(c=>c.id===o.caseId);return {id:a.outputId,position:a.position,code:a.code,case:c,content:o.generationStatus==='done'?anonymize(o.content,run):'',status:o.generationStatus,scores:parse(a.scores),note:a.note||'',updated:a.updated};});
+   const tasks=run.snapshot.cases.filter(c=>scope.includes(c.id)).map(c=>({case:c,answers:all.filter(a=>a.case.id===c.id)}));
    const projects=db.prepare('SELECT runs.name,runs.token FROM runs JOIN reviewers r ON r.runId=runs.id WHERE r.personId=? AND r.active=1 ORDER BY runs.created DESC').all(r.personId);
    return send(res,200,{name:r.name,runName:run.name,runToken:run.token,projects,dimensions:run.snapshot.dimensions.filter(d=>d.kind==='human'),cases:all.filter(a=>a.status==='done'),tasks,totalExpected:all.length,running:activeRuns.has(run.id)});
   }
   if(path==='/api/review/score'&&method==='POST'){
-   const b=await body(req),r=reviewer(req);assert(db.prepare('SELECT * FROM assignments WHERE reviewerId=? AND outputId=?').get(r.id,b.outputId),'该 Case 未分配给当前评审',403);
+   const b=await body(req),r=reviewer(req);assert(db.prepare('SELECT a.outputId FROM assignments a JOIN outputs o ON o.id=a.outputId JOIN reviewer_cases c ON c.reviewerId=a.reviewerId AND c.caseId=o.caseId WHERE a.reviewerId=? AND a.outputId=?').get(r.id,b.outputId),'该 Case 未分配给当前评审',403);
    assert(db.prepare("SELECT id FROM outputs WHERE id=? AND generationStatus='done'").get(b.outputId),'该回答尚未成功生成，不能提交评分',409);
    assert(b.scores&&['accuracy','suitability','utility'].every(k=>Number.isInteger(b.scores[k])&&b.scores[k]>=1&&b.scores[k]<=3),'请完成三个维度的 1—3 分评分');
    const scores=Object.fromEntries(['accuracy','suitability','utility'].map(k=>[k,b.scores[k]]));const note=String(b.note||'');assert(note.length<=5000,'评审意见最多 5000 字');

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS reviewers (id TEXT PRIMARY KEY,runId TEXT NOT NULL RE
 CREATE TABLE IF NOT EXISTS assignments (reviewerId TEXT NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,outputId TEXT NOT NULL REFERENCES outputs(id) ON DELETE CASCADE,position INTEGER NOT NULL,code TEXT NOT NULL, PRIMARY KEY(reviewerId,outputId));
 CREATE TABLE IF NOT EXISTS reviews (reviewerId TEXT NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,outputId TEXT NOT NULL REFERENCES outputs(id) ON DELETE CASCADE,scores TEXT NOT NULL,note TEXT NOT NULL,updated TEXT NOT NULL, PRIMARY KEY(reviewerId,outputId));
 CREATE TABLE IF NOT EXISTS personnel (id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,created TEXT NOT NULL,updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reviewer_cases (reviewerId TEXT NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,caseId TEXT NOT NULL,PRIMARY KEY(reviewerId,caseId));
 `);
 export const json=JSON.stringify,parse=s=>s?JSON.parse(s):null,uid=()=>randomUUID(),now=()=>new Date().toISOString();
 export function getKV(key,fallback){const r=db.prepare('SELECT value FROM kv WHERE key=?').get(key);return r?parse(r.value):fallback;}
@@ -55,6 +56,13 @@ if(!getKV('personnelMigration',false))transaction(()=>{
   db.prepare('UPDATE reviewers SET personId=? WHERE id=?').run(p.id,r.id);
  }
  putKV('personnelMigration',true);
+});
+// Existing reviewers keep access to their original full batch; new assignments specify Query IDs.
+if(!getKV('reviewerCasesMigration',false))transaction(()=>{
+ for(const r of db.prepare('SELECT id,runId FROM reviewers').all()){
+  for(const c of getRun(r.runId).snapshot.cases)db.prepare('INSERT OR IGNORE INTO reviewer_cases VALUES (?,?)').run(r.id,c.id);
+ }
+ putKV('reviewerCasesMigration',true);
 });
 // Only the server process performs recovery, not read-only diagnostics importing this module.
 export function recoverInterrupted(){db.exec(`UPDATE outputs SET generationStatus='failed',error='服务重启中断了请求；可手动重试，供应商可能已计费。' WHERE generationStatus='running';

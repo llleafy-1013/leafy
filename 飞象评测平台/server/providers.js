@@ -27,7 +27,7 @@ export async function callModel(config,prompt,{system='',structured=false}={}){
   if(raw.status==='failed')throw new Error(`Responses 请求失败：${cleanError(new Error(raw.error?.message||'未知原因'),[config.apiKey])}`);
   usage={input:raw.usage?.input_tokens??null,output:raw.usage?.output_tokens??null,total:raw.usage?.total_tokens??null,thinking:raw.usage?.output_tokens_details?.reasoning_tokens??null};
  }else{content=raw.choices?.[0]?.message?.content;finish=raw.choices?.[0]?.finish_reason;usage={input:raw.usage?.prompt_tokens??null,output:raw.usage?.completion_tokens??null,total:raw.usage?.total_tokens??null,thinking:raw.usage?.completion_tokens_details?.reasoning_tokens??null};}
- const result={content:typeof content==='string'?content:'',usage,latencyMs:Date.now()-start,finish:finish??null,request:{model:config.model,baseUrl:base,protocol:config.protocol,temperature:config.temperature,maxTokens:config.maxTokens}};
+ const result={content:typeof content==='string'?content:'',usage,latencyMs:Date.now()-start,finish:finish??null,request:{model:config.model,baseUrl:base,protocol:config.protocol,temperature:config.temperature,maxTokens:config.maxTokens,timeoutMs:config.timeoutMs}};
  if(['length','MAX_TOKENS'].includes(finish)){const e=new Error('输出达到 Token 上限并被截断。请检查输出预算后创建新任务，或重试当前配置。');e.partial=result;throw e;}
  if(!result.content.trim()){const e=new Error(`API 未返回可用正文（结束原因：${finish??'未提供'}），已保存实际用量。`);e.partial=result;throw e;}
  return result;

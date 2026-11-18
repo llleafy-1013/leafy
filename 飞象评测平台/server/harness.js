@@ -2,20 +2,20 @@ import {db,parse,json,getRun,getModels,getOutputs,now} from './store.js';
 import {callModel,draftRubric,auditRubric,judgeOutput,cleanError} from './providers.js';
 import {assert} from './domain.js';
 export const activeRuns=new Map();
-function configFor(snapshot){const current=getModels().find(m=>m.id===snapshot.id);assert(current?.apiKey,`${snapshot.name} 缺少 API 密钥`);return {...snapshot,apiKey:current.apiKey};}
-export function launch(id){assert(!activeRuns.has(id),'任务正在执行，请等待',409);const run=getRun(id);assert(run,'任务不存在',404);
+function configFor(snapshot,timeoutMs,maxTokens){const current=getModels().find(m=>m.id===snapshot.id);assert(current?.apiKey,`${snapshot.name} 缺少 API 密钥`);return {...snapshot,apiKey:current.apiKey,timeoutMs:timeoutMs??snapshot.timeoutMs,maxTokens:maxTokens??snapshot.maxTokens};}
+export function launch(id,{timeoutMs,maxTokens}={}){assert(timeoutMs===undefined||(Number.isInteger(timeoutMs)&&timeoutMs>=10000&&timeoutMs<=600000),'重试等待时间须为 10—600 秒');assert(maxTokens===undefined||(Number.isInteger(maxTokens)&&maxTokens>=256&&maxTokens<=65536),'重试生成预算须为 256—65536 Token');assert(!activeRuns.has(id),'任务正在执行，请等待',409);const run=getRun(id);assert(run,'任务不存在',404);
  for(const m of [...run.snapshot.models,run.snapshot.judge])configFor(m);
  db.prepare("UPDATE runs SET status='running' WHERE id=?").run(id);
- const promise=execute(id).catch(e=>{console.error('Harness:',cleanError(e,getModels().map(m=>m.apiKey)));db.prepare("UPDATE runs SET status='interrupted' WHERE id=?").run(id);}).finally(()=>activeRuns.delete(id));activeRuns.set(id,promise);
+ const promise=execute(id,timeoutMs,maxTokens).catch(e=>{console.error('Harness:',cleanError(e,getModels().map(m=>m.apiKey)));db.prepare("UPDATE runs SET status='interrupted' WHERE id=?").run(id);}).finally(()=>activeRuns.delete(id));activeRuns.set(id,promise);
 }
-async function execute(id){
- const run=getRun(id),judge=configFor(run.snapshot.judge);
+async function execute(id,timeoutMs,maxTokens){
+ const run=getRun(id),judge=configFor(run.snapshot.judge,timeoutMs);
  async function executeCase(c){
   let rubricRow=db.prepare('SELECT * FROM rubrics WHERE runId=? AND caseId=?').get(id,c.id);
   const outputs=getOutputs(id).filter(o=>o.caseId===c.id);
   // Query is identical for all tested models. Three vendors run concurrently.
   await Promise.all(outputs.filter(o=>o.generationStatus!=='done').map(async o=>{
-   const config=configFor(run.snapshot.models.find(m=>m.id===o.modelId));
+   const config=configFor(run.snapshot.models.find(m=>m.id===o.modelId),timeoutMs,maxTokens);
    db.prepare("UPDATE outputs SET generationStatus='running',error=NULL,attempts=attempts+1 WHERE id=?").run(o.id);
    try{const r=await callModel(config,c.query);db.prepare("UPDATE outputs SET generationStatus='done',content=?,latencyMs=?,usage=?,error=NULL WHERE id=?").run(r.content,r.latencyMs,json({...r.usage,finish:r.finish,request:r.request}),o.id);}
    catch(e){const p=e.partial;db.prepare("UPDATE outputs SET generationStatus='failed',content=?,latencyMs=?,usage=?,error=? WHERE id=?").run(p?.content??null,p?.latencyMs??null,p?json({...p.usage,finish:p.finish,request:p.request}):null,cleanError(e,[config.apiKey]),o.id);}
