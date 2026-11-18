@@ -1,5 +1,4 @@
-# Local-only project: upload is deferred until explicitly requested.
-/飞象评测平台/
+# EduBench source is tracked; credentials and runtime databases remain local.
 
 # Credentials and runtime data
 .env

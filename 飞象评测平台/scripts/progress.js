@@ -1,0 +1,6 @@
+// Read-only; safe to run while the server is evaluating.
+import {DatabaseSync} from 'node:sqlite';import {resolve} from 'node:path';
+const db=new DatabaseSync(resolve(process.env.DATA_DIR||'data','edubench.sqlite'),{readOnly:true});
+const runs=process.argv[2]?db.prepare('SELECT id,name,status,created FROM runs WHERE id=?').all(process.argv[2]):db.prepare('SELECT id,name,status,created FROM runs ORDER BY created DESC').all();
+for(const r of runs){const outputs=db.prepare('SELECT caseId,modelId,generationStatus,judgeStatus,latencyMs,error,judgeError FROM outputs WHERE runId=?').all(r.id);const rubrics=db.prepare('SELECT caseId,status,error FROM rubrics WHERE runId=?').all(r.id);console.log(JSON.stringify({...r,generated:outputs.filter(o=>o.generationStatus==='done').length,judged:outputs.filter(o=>o.judgeStatus==='done').length,total:outputs.length,standards:rubrics.filter(o=>o.status==='done').length,running:outputs.filter(o=>o.generationStatus==='running'||o.judgeStatus==='running').map(o=>`${o.caseId}/${o.modelId}`),errors:[...outputs.filter(o=>o.error||o.judgeError).map(o=>({case:o.caseId,model:o.modelId,error:o.error||o.judgeError})),...rubrics.filter(r=>r.error).map(r=>({case:r.caseId,step:'rubric',error:r.error}))]},null,2));}
+db.close();

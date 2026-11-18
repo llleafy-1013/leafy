@@ -1,0 +1,9 @@
+{
+  "name": "edubench-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "教育场景真实模型评测中台",
+  "scripts": {"start":"node --env-file-if-exists=.env server/index.js", "test":"node --test tests/*.test.js"},
+  "engines": {"node": ">=22.13"}
+}
